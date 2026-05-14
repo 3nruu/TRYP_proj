@@ -1,0 +1,16 @@
+cabal-version: 2.4
+name:          rjson
+version:       0.1.0.0
+synopsis:      Referenced JSON
+license:       MIT
+license-file:  LICENSE
+author:        TRPL Team
+build-type:    Simple
+
+executable rjson
+  main-is:          Main.hs
+  build-depends:    base       >= 4.14 && < 5
+                  , parsec     >= 3.1  && < 3.2
+                  , containers >= 0.6
+  default-language: Haskell2010
+  ghc-options:      -Wall
