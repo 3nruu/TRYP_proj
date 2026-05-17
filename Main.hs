@@ -88,6 +88,42 @@ pair = do
 parseRjson :: String -> Either ParseError Value
 parseRjson = parse (ws *> value <* eof) "<input>"     -- ## не оставляем мусор после значения
 
+data Err
+  = Dup   String      -- ## есил метка определна дважды
+  | Undef String      -- ## если не существует 
+  | Cycle [String]    -- ## цикл
+  deriving Show
+
+-- ## собираем таблицу меток
+collect :: Value -> Either Err (Map String Value)
+collect = go Map.empty
+  where
+    go m v = case v of
+      VLabel n inner
+        | Map.member n m -> Left (Dup n)
+        | otherwise      -> go (Map.insert n inner m) inner
+      VObj ps -> foldM (\acc (_, x) -> go acc x) m ps
+      VArr xs -> foldM go m xs
+      _       -> Right m
+
+-- ## убираем Vlabel, заменяем Vref
+subst :: Map String Value -> Value -> Either Err Value
+subst table = go []
+  where
+    go path v = case v of
+      VLabel _ inner -> go path inner
+      VRef n
+        | n `elem` path -> Left (Cycle (reverse path ++ [n]))
+        | otherwise -> case Map.lookup n table of
+            Nothing -> Left (Undef n)
+            Just v' -> go (n : path) v'
+      VObj ps -> VObj <$> traverse (\(k, x) -> fmap ((,) k) (go path x)) ps
+      VArr xs -> VArr <$> traverse (go path) xs
+      _       -> Right v
+
+resolve :: Value -> Either Err Value
+resolve v = collect v >>= flip subst v
+
 
 main :: IO ()
 main = do
