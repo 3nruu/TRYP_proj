@@ -1,5 +1,13 @@
 module Main (main) where
 
+import           Control.Monad         (foldM)
+import           Data.List             (intercalate)
+import qualified Data.Map.Strict       as Map
+import           Data.Map.Strict       (Map)
+import           Numeric               (showHex)
+import           System.Exit           (ExitCode (..), exitWith)
+import           System.IO             (hPutStrLn, hSetEncoding, stderr,
+                                        stdin, stdout, utf8)
 import           Text.Parsec
 import           Text.Parsec.String    (Parser)
 
@@ -125,9 +133,59 @@ resolve :: Value -> Either Err Value
 resolve v = collect v >>= flip subst v
 
 
+emit :: Value -> String
+emit = go 0
+  where
+    indent d = replicate (d * 2) ' '
+
+    go _ (VStr s)      = jsonStr s
+    go _ (VNum n)
+      | n == fromIntegral (truncate n :: Integer) && abs n < 1e15
+                       = show (truncate n :: Integer)
+      | otherwise      = show n
+    go _ (VBool True)  = "true"
+    go _ (VBool False) = "false"
+    go _ VNull         = "null"
+    go _ (VObj [])     = "{}"
+    go d (VObj ps)     = "{\n"
+                      ++ intercalate ",\n"
+                           [ indent (d + 1) ++ jsonStr k ++ ": " ++ go (d + 1) x
+                           | (k, x) <- ps ]
+                      ++ "\n" ++ indent d ++ "}"
+    go _ (VArr [])     = "[]"
+    go d (VArr xs)     = "[\n"
+                      ++ intercalate ",\n"
+                           [ indent (d + 1) ++ go (d + 1) x | x <- xs ]
+                      ++ "\n" ++ indent d ++ "]"
+    go _ _             = error "emit: unresolved label/reference"
+
+    jsonStr s = '"' : concatMap escChar s ++ "\""
+
+    escChar '"'  = "\\\""
+    escChar '\\' = "\\\\"
+    escChar '\n' = "\\n"
+    escChar '\t' = "\\t"
+    escChar '\r' = "\\r"
+    escChar '\b' = "\\b"
+    escChar '\f' = "\\f"
+    escChar c
+      | c < ' '   = "\\u" ++ pad4 (showHex (fromEnum c) "")
+      | otherwise = [c]
+
+    pad4 s = replicate (4 - length s) '0' ++ s
+
+
 main :: IO ()
 main = do
+  hSetEncoding stdin  utf8
+  hSetEncoding stdout utf8
   src <- getContents
   case parseRjson src of
-    Left  e -> putStrLn ("parse error: " ++ show e)
-    Right v -> print v
+    Left e -> do
+      hPutStrLn stderr ("parse error: " ++ show e)
+      exitWith (ExitFailure 1)
+    Right v -> case resolve v of
+      Left e -> do
+        hPutStrLn stderr ("resolve error: " ++ show e)
+        exitWith (ExitFailure 2)
+      Right r -> putStrLn (emit r)

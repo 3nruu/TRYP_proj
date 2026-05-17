@@ -1,0 +1,134 @@
+\documentclass[a4paper,11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+\usepackage[russian]{babel}
+\usepackage{listings}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  framesep=4pt
+}
+
+\title{rjson: расширение JSON метками и ссылками}
+\author{Кабиров Рустам, Кабиров Руслан, Заходов Егор\\ МФТИ, 2026}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Постановка}
+
+Формат rjson расширяет JSON двумя конструкциями:
+\begin{itemize}
+  \item метка \texttt{ident@value} — даёт значению имя;
+  \item ссылка \texttt{@ident} — в позиции значения раскрывается в
+        значение соответствующей метки.
+\end{itemize}
+Дополнительно разрешены неэкранированные ключи объектов
+(\texttt{name:} вместо \texttt{"name":}). Компилятор разрешает все
+ссылки и выводит чистый JSON.
+
+\section{Грамматика (PEG)}
+
+Используем формализм PEG: \texttt{/} — упорядоченный выбор,
+\texttt{?},\texttt{*},\texttt{+} — кванторы.
+\begin{lstlisting}
+Value      <- _ (IdentStart / Ref / Object / Array / String / Number) _
+IdentStart <- Ident ("@" Value / Keyword)
+Ref        <- "@" Ident
+Object     <- "{" (Pair ("," Pair)*)? "}"
+Pair       <- (String / Ident) ":" Value
+Array      <- "[" (Value ("," Value)*)? "]"
+Ident      <- [a-zA-Z_] [a-zA-Z_0-9]*
+Keyword    <- "true" / "false" / "null"
+String     <- '"' (Escape / [^"\])* '"'
+Number     <- "-"? [0-9]+ ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
+_          <- (whitespace)*
+\end{lstlisting}
+
+\section{Парсер}
+
+Реализован на библиотеке Parsec в монадическо-аппликативном стиле, де можно — аппликативно, где нужна зависимость — через do.
+
+Каждая лексема съедает хвостовые пробелы.
+
+Сложность представляют идентификаторы: они начинают сразу три
+конструкции — метку (\texttt{ident@\ldots}), ключ объекта
+(\texttt{ident:\ldots}) и ключевое слово (\texttt{true}, \texttt{false},
+\texttt{null}). Различение по контексту:
+
+\begin{itemize}
+  \item внутри \texttt{Value} мы парсим идентификатор и затем смотрим
+        вперёд: если идёт \texttt{@}, это метка; иначе — ключевое
+        слово (если совпадает) или ошибка;
+  \item внутри \texttt{Pair} за идентификатором ожидается \texttt{:}.
+\end{itemize}
+
+Такой алгоритм даёт однозначный детерминированный разбор без
+комбинатора \texttt{try}.
+
+\section{Разрешение ссылок}
+
+Двухпроходный алгоритм.
+
+\paragraph{Проход 1. Сбор таблицы меток.}
+Обход дерева в глубину, накапливаем \texttt{Map String Value}: для
+каждого узла \texttt{VLabel n inner} проверяем, не определена ли уже
+метка $n$. Если определена — ошибка \texttt{Dup}. Иначе кладём $n
+\mapsto inner$ и рекурсивно собираем метки из \texttt{inner}.
+
+Поскольку таблица собирается \emph{до} подстановки, ссылка может
+встречаться раньше определения метки (\emph{forward reference}).
+
+\paragraph{Проход 2. Подстановка.}
+Обход дерева с состоянием — список \texttt{path} активно
+разворачиваемых имён:
+\begin{itemize}
+  \item \texttt{VLabel \_ inner} — снимаем обёртку;
+  \item \texttt{VRef n} — если $n \in \texttt{path}$, выдаём \texttt{Cycle}
+        c полным хронологическим путём; иначе находим $n$ в таблице
+        (либо \texttt{Undef}) и продолжаем разрешение
+        с $\texttt{path}' = n : \texttt{path}$;
+  \item контейнеры — рекурсивно с тем же путём (это ловит вложенные
+        циклы типа \texttt{a@\{x:@a\}}).
+\end{itemize}
+
+Псевдокод:
+\begin{lstlisting}[language=Haskell]
+subst table = go []
+  where
+    go path val = case val of
+      VLabel _ inner -> go path inner
+      VRef n
+        | n `elem` path -> Left (Cycle (reverse path ++ [n]))
+        | otherwise -> case Map.lookup n table of
+            Nothing -> Left (Undef n)
+            Just v' -> go (n : path) v'
+      VObj ps -> VObj <$> traverse (\(k,x) -> ((,) k) <$> go path x) ps
+      VArr xs -> VArr <$> traverse (go path) xs
+      _       -> Right val
+\end{lstlisting}
+
+\section{Сериализация}
+
+Отдельный ручной эмиттер выводит чистый JSON с двухпробельными
+отступами; строки и числа форматируются стандартным \texttt{show}.
+
+\section{Сборка и запуск}
+
+\begin{lstlisting}[language=sh]
+cabal build
+cabal run rjson < examples/universities.rjson > out.json
+\end{lstlisting}
+
+Коды возврата: 0 — успех, 1 — ошибка парсинга, 2 — ошибка разрешения.
+
+
+\end{document}

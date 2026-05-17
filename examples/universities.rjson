@@ -1,0 +1,10 @@
+{
+  universities: [
+    mipt@{"name": "MIPT", "address": "Институтский переулок, 9, Долгопрудный"},
+    msu@ {"name": "MSU",  "address": "Ленинские горы, 1, Москва"}
+  ],
+  "students": [
+    {name: "Ivan Ivanov",  university: @mipt},
+    {name: "Peter Petrov", university: @msu}
+  ]
+}

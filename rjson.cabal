@@ -4,7 +4,6 @@ version:       0.1.0.0
 synopsis:      Referenced JSON
 license:       MIT
 license-file:  LICENSE
-author:        TRPL Team
 build-type:    Simple
 
 executable rjson
